@@ -1,0 +1,43 @@
+# All the commands you need to get arch linux running with internet on a new system.
+# Bare minimum working setup.
+
+blkdiscard -f /dev/sda
+sgdisk -n 1:0:+512M -t 1:ef00 -c 1:"EFI" /dev/sda
+sgdisk -n 2:0:0 -t 2:8300 -c 2:"arch" /dev/sda
+mkfs.fat -F 32 /dev/sda1
+mkfs.ext4 /dev/sda2
+mount /dev/sda2 /mnt
+mount --mkdir /dev/sda1 /mnt/boot
+reflector --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
+pacstrap -K /mnt base intel-ucode iwd linux linux-firmware openssh sudo vim
+genfstab -U /mnt >> /mnt/etc/fstab
+arch-chroot /mnt
+ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
+hwclock --systohc
+sed -i 's/#de_DE.UTF-8 UTF-8/de_DE.UTF-8 UTF-8/' /etc/locale.gen
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "dell" > /etc/hostname
+useradd -m -G wheel -s /bin/bash sachs
+passwd sachs
+echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel
+chmod 0440 /etc/sudoers.d/wheel
+visudo -cf /etc/sudoers.d/wheel
+printf '[Match]\nName=en* wl*\n\n[Network]\nDHCP=yes\n' > /etc/systemd/network/20-dhcp.network
+echo "KEYMAP=neoqwertz" > /etc/vconsole.conf
+mkdir -p /etc/kernel
+echo "root=PARTUUID=$(blkid -s PARTUUID -o value /dev/sda2) rw" > /etc/kernel/cmdline
+cat > /etc/mkinitcpio.d/linux.preset <<'EOF'
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux"
+ALL_cmdline="/etc/kernel/cmdline"
+PRESETS=('default')
+default_uki="/boot/EFI/BOOT/BOOTX64.EFI"
+EOF
+mkdir -p /boot/EFI/BOOT
+mkinitcpio -p linux
+systemctl enable iwd sshd systemd-timesyncd systemd-networkd systemd-resolved
+exit
+umount -R /mnt
+reboot

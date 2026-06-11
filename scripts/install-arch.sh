@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+#
+# Arch install script - run from the live ISO as root:
+#   bash install-arch.sh
+#
+# The script runs in two phases: 
+#   Phase 1: live-ISO phase (partition, pacstrap),
+#   Phase 2: it copies itself into /mnt and re-executes inside arch-chroot for the configuration phase. 
+# Don't forget to check and configure options in config section.
+
+set -euo pipefail
+
+# config
+DISK="/dev/nvme0n1"
+EFI_PART="${DISK}p1"
+ROOT_PART="${DISK}p2"
+HOSTNAME="blackwell"
+USERNAME="sachs"
+TIMEZONE="Europe/Berlin"
+SWAP_SIZE="32G"
+USER_PASSWORD="hunter2"
+ROOT_PASSWORD="hunter2"
+
+PACKAGES=(
+  amd-ucode arm-none-eabi-gcc arm-none-eabi-gdb arm-none-eabi-newlib
+  base base-devel bluez bluez-utils btop chromium cmake cpupower cuda cudnn curl
+  dmidecode dmenu docker fastfetch feh ffmpeg
+  gdb github-cli git gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugin-pipewire
+  i3-wm i3status inxi iwd less linux linux-firmware linux-headers lm_sensors
+  man-db man-pages minicom nmap nvidia-container-toolkit nvidia-open nvidia-utils nvme-cli nvtop
+  opencv openocd openssh pipewire pipewire-alsa pipewire-pulse powertop python python-pip
+  ranger tailscale tcpdump tmux traceroute tree ttf-ibm-plex usbutils vim wget wireplumber wireshark-cli
+  xclip xorg-server xorg-xev xorg-xinit xorg-xrandr xorg-xset zathura-pdf-mupdf
+)
+
+# Phase 2 inside chroot
+if [[ "${1:-}" == "chroot" ]]; then
+  ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
+  hwclock --systohc
+  sed -i 's/#de_DE.UTF-8 UTF-8/de_DE.UTF-8 UTF-8/' /etc/locale.gen
+  sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+  locale-gen
+  echo "LANG=en_US.UTF-8" > /etc/locale.conf
+
+  echo "${HOSTNAME}" > /etc/hostname
+  printf '[Match]\nName=en* wl*\n\n[Network]\nDHCP=yes\n' > /etc/systemd/network/20-dhcp.network
+
+  echo "KEYMAP=neoqwertz" > /etc/vconsole.conf
+  mkdir -p /etc/X11/xorg.conf.d
+  cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<'EOF'
+Section "InputClass"
+    Identifier "keyboard"
+    MatchIsKeyboard "on"
+    Option "XkbLayout" "de"
+    Option "XkbVariant" "neo_qwertz"
+EndSection
+EOF
+  cat > /etc/X11/xorg.conf.d/10-no-blank.conf <<'EOF'
+Section "ServerFlags"
+    Option "BlankTime" "0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime" "0"
+EndSection
+EOF
+
+  useradd -m -G wheel -s /bin/bash "${USERNAME}"
+  printf '%s:%s\n' "${USERNAME}" "${USER_PASSWORD}" | chpasswd
+  printf '%s:%s\n' root "${ROOT_PASSWORD}" | chpasswd
+  echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel
+  chmod 0440 /etc/sudoers.d/wheel
+  visudo -cf /etc/sudoers.d/wheel
+
+  fallocate -l "${SWAP_SIZE}" /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo "/swapfile none swap defaults 0 0" >> /etc/fstab
+
+  # st with scrollback patches
+  git clone https://git.suckless.org/st "/home/${USERNAME}/st"
+  cd "/home/${USERNAME}/st"
+  mkdir -p patches
+  curl -Lo patches/st-scrollback-0.9.2.diff \
+    https://st.suckless.org/patches/scrollback/st-scrollback-0.9.2.diff
+  curl -Lo patches/st-scrollback-mouse-0.9.2.diff \
+    https://st.suckless.org/patches/scrollback/st-scrollback-mouse-0.9.2.diff
+  curl -Lo patches/st-scrollback-mouse-altscreen-20200416-5703aa0.diff \
+    https://st.suckless.org/patches/scrollback/st-scrollback-mouse-altscreen-20200416-5703aa0.diff
+  patch -p1 < patches/st-scrollback-0.9.2.diff
+  patch -p1 < patches/st-scrollback-mouse-0.9.2.diff
+  patch -p1 < patches/st-scrollback-mouse-altscreen-20200416-5703aa0.diff
+  cp config.def.h config.h
+  sed -i 's/font = ".*"/font = "IBM Plex Mono:pixelsize=12:antialias=true:autohint=true"/' config.h
+  make clean install
+  chown -R "${USERNAME}:${USERNAME}" "/home/${USERNAME}/st"
+  cd /
+
+  # UKI boot setup
+  echo "root=PARTUUID=$(blkid -s PARTUUID -o value "${ROOT_PART}") rw" > /etc/kernel/cmdline
+
+  cat > /etc/mkinitcpio.d/linux.preset <<'EOF'
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux"
+ALL_cmdline="/etc/kernel/cmdline"
+
+PRESETS=('default')
+
+default_uki="/boot/EFI/BOOT/BOOTX64.EFI"
+EOF
+
+  mkdir -p /boot/EFI/BOOT
+  mkinitcpio -p linux
+
+  systemctl enable bluetooth iwd nvidia-persistenced sshd \
+    systemd-networkd systemd-resolved systemd-timesyncd tailscaled
+
+  exit 0
+fi
+
+# Phase 1
+echo ">>> Before wiping ${DISK}, did you configure options in config section?"
+read -rp "Type 'yes sir' to confirm: " confirm
+[[ "${confirm}" == "yes sir" ]] || { echo "Aborted."; exit 1; }
+
+blkdiscard -f "${DISK}"
+sgdisk -n 1:0:+1G -t 1:ef00 -c 1:"EFI" \
+       -n 2:0:0   -t 2:8300 -c 2:"arch" \
+       -p "${DISK}"
+partprobe "${DISK}"
+udevadm settle
+mkfs.fat -F 32 "${EFI_PART}"
+mkfs.ext4 -F "${ROOT_PART}"
+
+mount "${ROOT_PART}" /mnt
+mount --mkdir "${EFI_PART}" /mnt/boot
+
+reflector --latest 10 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
+
+pacstrap -K /mnt "${PACKAGES[@]}"
+
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# re-run script for phase 2
+cp "$0" /mnt/root/install-arch.sh
+arch-chroot /mnt /bin/bash /root/install-arch.sh chroot
+rm /mnt/root/install-arch.sh
+
+umount -R /mnt
+echo ">>> Install complete. Reboot"
