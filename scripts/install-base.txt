@@ -14,7 +14,6 @@ genfstab -U /mnt >> /mnt/etc/fstab
 arch-chroot /mnt
 ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
 hwclock --systohc
-sed -i 's/#de_DE.UTF-8 UTF-8/de_DE.UTF-8 UTF-8/' /etc/locale.gen
 sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
 locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
@@ -23,7 +22,6 @@ useradd -m -G wheel -s /bin/bash sachs
 passwd sachs
 echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel
 chmod 0440 /etc/sudoers.d/wheel
-visudo -cf /etc/sudoers.d/wheel
 printf '[Match]\nName=en* wl*\n\n[Network]\nDHCP=yes\n' > /etc/systemd/network/20-dhcp.network
 echo "KEYMAP=neoqwertz" > /etc/vconsole.conf
 mkdir -p /etc/kernel
