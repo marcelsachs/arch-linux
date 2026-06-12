@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#
+
 # Build and install st with scrollback patches.
 
 set -euo pipefail
