@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
 # Build and install st with scrollback patches.
-#   bash setup-st.sh
 
 set -euo pipefail
 
@@ -16,7 +15,7 @@ PATCHES=(
 )
 
 if [[ -d "${ST_DIR}" ]]; then
-  echo "!!! ${ST_DIR} already exists. Remove it first to rebuild from scratch:"
+  echo "${ST_DIR} already exists."
   echo "    rm -rf ${ST_DIR}"
   exit 1
 fi
